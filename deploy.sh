@@ -16,15 +16,15 @@
 # ==================== 【用户可配置参数区】====================
 # 请根据需要修改以下参数的值
 
-# 监听端口（SHADOWSOCKS 占用 443，所以这里默认 8443，请避开 443）
-LISTEN_PORT=8443
+# 监听端口
+LISTEN_PORT=443
 
 # 伪装的目标网站（SNI），流量会伪装成访问该网站
 # 推荐值：www.apple.com（推荐）/ www.microsoft.com / www.speedtest.net / dl.google.com
 REALITY_SNI="www.apple.com"
 
 # 用户自定义名称（用于客户端识别，随便填）
-USER_NAME="my-vless-user"
+USER_NAME="sing-box"
 
 # UUID（用户唯一标识）：留空则脚本自动生成
 CUSTOM_UUID=""
