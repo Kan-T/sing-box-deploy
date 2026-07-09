@@ -1,0 +1,24 @@
+📋 你的 VLESS-Reality 连接信息：
+
+  服务器IP: 94.74.88.130
+  端口:     8443
+  UUID:     09785210-e3b3-4149-80b2-2c52b6a123ee
+  公钥:     vGqxvE9pYdhr8q7YFxop26ok1cRTbV_q6_4g_YDE5C0
+  ShortID:  28567cc9
+  SNI:      www.apple.com
+  Flow:     xtls-rprx-vision
+  指纹(fp): chrome
+
+🔗 VLESS 分享链接：
+
+  vless://09785210-e3b3-4149-80b2-2c52b6a123ee@94.74.88.130:8443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.apple.com&fp=chrome&pbk=vGqxvE9pYdhr8q7YFxop26ok1cRTbV_q6_4g_YDE5C0&sid=28567cc9&type=tcp#my-vless-user
+
+============================================================
+📂 连接信息已保存到：/etc/sing-box/client-info.txt
+📋 查看方式：cat /etc/sing-box/client-info.txt
+
+ℹ ⚠️ 阿里云 ECS 需在控制台【安全组】放行 8443 端口（TCP）
+ℹ 📝 查看日志：journalctl -u sing-box -f
+ℹ 🔄 重启服务：systemctl restart sing-box
+ℹ 🛑 停止服务：systemctl stop sing-box
+ℹ ❌ 完全卸载：systemctl disable --now sing-box && apt remove -y sing-box
