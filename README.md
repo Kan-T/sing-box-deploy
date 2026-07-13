@@ -437,12 +437,14 @@ apt remove -y sing-box
 
 ### 重新部署
 
-脚本支持重复运行，会自动备份旧配置到 `/etc/sing-box/config.json.backup.时间戳`。
+脚本支持重复运行，会自动清理上一次运行遗留的 sing-box 进程（停止 systemd 服务并终止残留进程，释放监听端口），无需手动停止服务即可重跑：
 
 ```bash
 # 修改 deploy.sh 中的参数后重新运行
 ./deploy.sh
 ```
+
+旧配置会自动备份到 `/etc/sing-box/config.json.backup.时间戳`。
 
 ### 更新 sing-box
 

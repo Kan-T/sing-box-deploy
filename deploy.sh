@@ -85,15 +85,47 @@ echo "  官方源：https://sing-box.sagernet.org"
 echo "============================================================"
 echo ""
 
-# ---------- 0. 端口冲突检测 ----------
-echo -e "\n[1/9] 正在检测端口冲突..."
+# ---------- 0. 清理上一次运行的遗留进程 ----------
+echo -e "\n[0/9] 正在清理上一次运行的遗留进程..."
+cleanup_previous() {
+    # 停止 systemd 服务（若存在且正在运行）
+    if systemctl list-unit-files sing-box.service &>/dev/null && systemctl is-active --quiet sing-box 2>/dev/null; then
+        systemctl stop sing-box
+        info "已停止 systemd 管理的 sing-box 服务"
+    fi
+
+    # 兜底：杀死仍在运行的 sing-box 进程，释放监听端口
+    if pgrep -x sing-box >/dev/null 2>&1; then
+        pkill -x sing-box
+        # 等待进程退出并释放端口
+        for i in $(seq 1 10); do
+            pgrep -x sing-box >/dev/null 2>&1 || break
+            sleep 0.5
+        done
+        if pgrep -x sing-box >/dev/null 2>&1; then
+            pkill -9 -x sing-box
+        fi
+        info "已终止遗留的 sing-box 进程"
+    fi
+
+    # 等待端口彻底释放
+    for i in $(seq 1 10); do
+        ss -tlnp | grep -q ":$LISTEN_PORT " || break
+        sleep 0.5
+    done
+}
+cleanup_previous
+ok "遗留进程清理完成"
+
+# ---------- 1. 端口冲突检测 ----------
+echo -e "\n[2/10] 正在检测端口冲突..."
 if ! check_port $LISTEN_PORT; then
     exit 1
 fi
 ok "端口 $LISTEN_PORT 可用"
 
-# ---------- 1. 低内存环境适配 ----------
-echo -e "\n[2/9] 正在检查系统环境..."
+# ---------- 2. 低内存环境适配 ----------
+echo -e "\n[3/10] 正在检查系统环境..."
 
 # 检查内存并设置 swap（防止 OOM）
 TOTAL_MEM=$(free -m | awk '/^Mem:/{print $2}')
@@ -129,8 +161,8 @@ apt install -y curl wget sudo gnupg lsb-release
 check_cmd "系统准备失败"
 ok "系统环境就绪"
 
-# ---------- 2. 从 sing-box 官方 APT 源安装 ----------
-echo -e "\n[3/9] 正在从官方源安装 sing-box..."
+# ---------- 3. 从 sing-box 官方 APT 源安装 ----------
+echo -e "\n[4/10] 正在从官方源安装 sing-box..."
 
 # 检查是否已安装
 if command -v sing-box &> /dev/null; then
@@ -160,8 +192,8 @@ Signed-By: $KEYRINGS_DIR/sagernet.asc" | tee /etc/apt/sources.list.d/sagernet.so
     ok "sing-box 安装成功：$(sing-box version | head -n1)"
 fi
 
-# ---------- 3. 生成加密材料 ----------
-echo -e "\n[4/9] 正在生成加密密钥..."
+# ---------- 4. 生成加密材料 ----------
+echo -e "\n[5/10] 正在生成加密密钥..."
 
 # 生成 UUID
 if [ -z "$CUSTOM_UUID" ]; then
@@ -182,8 +214,8 @@ SHORT_ID=$(sing-box generate rand 4 --hex)
 SERVER_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || curl -s --max-time 5 icanhazip.com 2>/dev/null || echo "获取失败")
 ok "加密材料生成完成"
 
-# ---------- 4. 备份旧配置并写入新配置 ----------
-echo -e "\n[5/9] 正在写入配置文件..."
+# ---------- 5. 备份旧配置并写入新配置 ----------
+echo -e "\n[6/10] 正在写入配置文件..."
 
 CONFIG_FILE="/etc/sing-box/config.json"
 
@@ -244,8 +276,8 @@ sing-box check -c "$CONFIG_FILE"
 check_cmd "配置文件语法检查失败"
 ok "配置文件写入完成：$CONFIG_FILE"
 
-# ---------- 5. 保存客户端连接信息 ----------
-echo -e "\n[6/9] 正在保存连接信息..."
+# ---------- 6. 保存客户端连接信息 ----------
+echo -e "\n[7/10] 正在保存连接信息..."
 
 CLIENT_INFO_FILE="/etc/sing-box/client-info.txt"
 cat > "$CLIENT_INFO_FILE" << EOF
@@ -276,9 +308,9 @@ EOF
 ok "连接信息已保存到 $CLIENT_INFO_FILE"
 chmod 600 "$CLIENT_INFO_FILE"
 
-# ---------- 6. 开启 BBR（可选、幂等）----------
+# ---------- 7. 开启 BBR（可选、幂等）----------
 if [ "$ENABLE_BBR" = true ]; then
-    echo -e "\n[7/9] 正在开启 BBR 拥塞控制..."
+    echo -e "\n[8/10] 正在开启 BBR 拥塞控制..."
 
     # 检查当前状态
     CURRENT_CC=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
@@ -297,8 +329,8 @@ if [ "$ENABLE_BBR" = true ]; then
     fi
 fi
 
-# ---------- 7. 禁用 IPv6 避免出站超时 ----------
-echo -e "\n[8/9] 正在优化网络参数（禁用 IPv6 避免出站超时）..."
+# ---------- 8. 禁用 IPv6 避免出站超时 ----------
+echo -e "\n[9/10] 正在优化网络参数（禁用 IPv6 避免出站超时）..."
 if [ -f /etc/sysctl.d/99-singbox.conf ]; then
     ok "IPv6 已禁用"
 else
@@ -307,8 +339,8 @@ else
     ok "IPv6 已禁用"
 fi
 
-# ---------- 8. 启动并设置开机自启 ----------
-echo -e "\n[9/9] 正在启动 sing-box 服务..."
+# ---------- 9. 启动并设置开机自启 ----------
+echo -e "\n[10/10] 正在启动 sing-box 服务..."
 
 # 重载 systemd
 systemctl daemon-reload
