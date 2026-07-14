@@ -126,10 +126,9 @@ cat > "${CONF_DIR}/frps.toml" <<EOF
 bindPort = ${BIND_PORT}
 auth.token = "${TOKEN}"
 
-# 内存优化：限制连接池和缓冲区
+# 内存优化：限制连接池
 transport.maxPoolCount = 50
-transport.heartbeatInterval = 30
-transport.heartbeatTimeout = 90
+# 心跳配置在客户端(frpc)设置，服务端不需要
 
 # 日志级别
 log.level = "info"
