@@ -155,8 +155,41 @@ if [ "$TOTAL_MEM" -le 1024 ]; then
     ok "Swap 空间已设置（$(free -m | awk '/^Swap:/{print $2}')MB）"
 fi
 
+# 修复有问题的 APT 源并重试 apt update（仅在 apt update 失败时触发，不影响正常环境）
+fix_apt_sources() {
+    local fixed=0
+    for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+        [[ -f "$f" ]] || continue
+        if grep -qE 'Signed-By=' "$f" 2>/dev/null; then
+            while IFS= read -r keypath; do
+                keypath=$(echo "$keypath" | tr -d ' ')
+                [[ -z "$keypath" ]] && continue
+                if [[ ! -f "$keypath" ]]; then
+                    warn "APT 源 $f 引用了不存在的密钥文件: $keypath，临时移除此源"
+                    mv "$f" "${f}.broken.$(date +%Y%m%d_%H%M%S)"
+                    fixed=1
+                    break
+                fi
+            done < <(grep -oP 'Signed-By=\K[^ ]+' "$f" 2>/dev/null || true)
+        fi
+    done
+    for f in /etc/apt/sources.list.d/docker*.list /etc/apt/sources.list.d/docker*.sources; do
+        [[ -f "$f" ]] || continue
+        if grep -qE 'download\.docker\.com' "$f" 2>/dev/null; then
+            warn "检测到 Docker APT 源: $f（可能引起签名冲突），临时禁用"
+            mv "$f" "${f}.disabled.$(date +%Y%m%d_%H%M%S)"
+            fixed=1
+        fi
+    done
+    (( fixed )) && ok "已清理有问题的 APT 源，正在重试 apt update..." || info "未检测到可自动修复的 APT 源问题"
+}
+
 # 更新软件包索引（不升级，只安装必要工具降低 OOM 风险）
-apt update -y
+if ! apt update -y; then
+    warn "apt update 失败，尝试自动修复 APT 源..."
+    fix_apt_sources
+    apt update -y
+fi
 apt install -y curl wget sudo gnupg lsb-release
 check_cmd "系统准备失败"
 ok "系统环境就绪"
