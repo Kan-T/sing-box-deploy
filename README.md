@@ -13,6 +13,7 @@
 - [端口对照表](#端口对照表)
 - [维护管理](#维护管理)
 - [排错指南](#排错指南)
+- [VDI Keepalive](#vdi-keepalive-华为-fusionaccess-vdi-防断连方案)
 
 ---
 
@@ -548,6 +549,19 @@ vless://61c70a84-facf-43f8-85c6-82096a7f5d60@8.216.46.75:8443?encryption=none&fl
 |------|------|
 | `deploy.sh` | 服务器端一键部署脚本 |
 | `README.md` | 本操作指南 |
+| `vdi-keepalive.md` | **华为 VDI 防断连方案**（keepalive + heal + DNS 修复） |
 | `/etc/sing-box/config.json` | 服务端配置文件 |
 | `/etc/sing-box/client-info.txt` | 客户端连接信息 |
 | `D:\Programs\Hiddify\hiddify_portable_data\data\current-config.json` | Hiddify 本地配置 |
+
+---
+
+## VDI Keepalive（华为 FusionAccess VDI 防断连方案）
+
+> 详见 [vdi-keepalive.md](vdi-keepalive.md)
+
+在华为 FusionAccess VDI 上部署本地 keepalive 脚本，防止 HDC 服务端空闲断开，并监控 sing-box 隧道健康。包含：
+
+- **keepalive.py**（v13）：evdev + 剪贴板 + 屏保抑制多通道防护，子进程超时保护防卡死
+- **heal.py**：一键诊断 + 自动修复 keepalive / bind mount / sing-box
+- **sing-box DNS 修复**：REALITY 握手失败的 `/etc/hosts` 解决方案
