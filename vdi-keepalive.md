@@ -131,8 +131,56 @@ TLS handshake: REALITY: processed invalid connection
 
 1. **HDC 服务端策略无法绕过** — 本地所有模拟都不被 HDC 认可，需要管理员在
    FusionAccess 管理平台调整"会话超时断开"策略
-2. **重启后 bind mount 丢失** — 需要重新挂载（heal.py 会提示）
+2. **重启后 bind mount 丢失** — 需要重新挂载（heal.py 非 `--check` 模式会自动 `mount --bind` 恢复；`vdi-hdc-repair.sh` 也会重挂）
 3. **VNC 不帮助活跃检测** — VNC 走 X11 协议，不走 HDP
+
+## VDI 只能 VNC、进不了正规桌面协议（HDC/HDP）的排查
+
+**症状**：本地 HDC 客户端连不上（"虚拟机尚未就绪" 6039 / 连接失败），只能退回 VNC 才能进桌面。HDAgent 日志反复：
+
+```
+Make session ready fail, create socket fail, error:-1013
+StartPreconnectFunc: Preconnect failed, code:28104003
+The user(kantaoc) logined in to the VNC, needs to log out of the session or restart the desktop
+IsVaildSession: login module is null, only HDAgent restart, no need to rebuild session
+```
+
+**根因**（2026-10 排查确认）：HDAgent 的 HDP pre-connect 需要一个由**用户图形会话**创建的 unix socket。那个 socket 由 GNOME 登录会话的 autostart 拉起：
+
+```
+/etc/xdg/autostart/hdpdaemon.desktop → hdpdaemon.sh → hdpdaemon20
+```
+
+一旦当前会话是 **VNC 建的**（不是正规 HDC 登录），或会话里 `hdpdaemon20` 没起来 / 会话状态脏了，HDAgent 就拒绝 HDP 接管 → 客户端回退 VNC。
+
+**修复**（按风险从低到高，全程不碰 frpc/sing-box/keepalive，VPN 不断）：
+
+| 级别 | 操作 | 何时用 |
+|---|---|---|
+| 1 | `sudo bash vdi-hdc-repair.sh --light` | 注销当前 VNC 会话，清"会话被 VNC 占住"状态，然后重新正规登录 |
+| 2 | `sudo bash vdi-hdc-repair.sh --agent` | kill HDAgent（华为 monitor 自动重拉重注册），清 `IsVaildSession null` 空转 |
+| 3 | `sudo bash vdi-hdc-repair.sh --all` | 1+2 都做（推荐先跑） |
+| 4 | `sudo bash vdi-hdc-repair.sh --reboot` | 重启 VDI（最后手段，最彻底；frpc/sing-box/keepalive 都开机自启，起来后自动回来） |
+
+跑完 1-3 后：**用正规 HDC 客户端（华为 Workspace，走 HDP/流媒体协议，不要选 VNC/备用）重新登录**。正规登录会经 gdm 建会话 + autostart 拉起 `hdpdaemon20`，HDP 通道即通，不再退回 VNC。
+
+> ⚠️ 关键：登录时务必走正规 HDC 协议。若你客户端默认连的还是 VNC，等于没换，必须手动切到 HDP/流媒体。
+
+**如果本地线路把 HDP 媒体面（UDP）丢了、又退回 VNC**：那是本地出口到华为云控制面的线路问题（和翻墙根因同源），不是 VDI 的问题。此时可走 frpc 隧道把 HDP 媒体面也转过去（跟翻墙同一入口），或继续用 VNC + keepalive 维持 24h。
+
+## bind mount 持久化（重启后自动恢复）
+
+`/etc/hdpserver/policy.xml` 的 bind mount（覆盖 HDAgent 10 分钟锁屏/断连策略）**重启后不会自动恢复**。三种做法，按推荐顺序：
+
+1. **fstab 持久化**（最稳，开机自动挂）：
+   ```
+   /home/kantaoc/keep_alive/policy_fake.xml /etc/hdpserver/policy.xml none bind 0 0
+   ```
+   加到 `/etc/fstab`，重启自动生效。
+2. **heal.py 自动重挂**（已内置）：非 `--check` 模式下检测到未挂载就 `sudo mount --bind` 恢复。
+3. **vdi-hdc-repair.sh 兜底**：每次跑修复时会重挂 bind mount。
+
+推荐 **1 + 2 双保险**：fstab 负责开机，heal.py 负责"挂载被意外弄掉"。
 
 ## 端口对照
 

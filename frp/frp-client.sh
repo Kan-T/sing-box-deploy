@@ -5,6 +5,9 @@
 #   交互式：sudo bash frp-client.sh
 #   参数化：sudo bash frp-client.sh --server <IP> --token <TOKEN> --proxies 'name=ssh,type=tcp,local_port=22,remote_port=6000;name=web,type=tcp,local_port=80,remote_port=8080'
 #   环境变量：SERVER_ADDR, TOKEN, PROXIES (同上格式)
+#   国内源下载（GitHub 慢/国内机器）：--download-url "https://gh-proxy.com/https://github.com/fatedier/frp/releases/download/v0.63.0/frp_0.63.0_linux_amd64.tar.gz"
+#   跳过 apt（VDI 等 apt 源过期会失败的机器，frp 是预编译二进制不需要 apt 装）：--skip-apt 1
+#   仅改指向/重装配置（frp 二进制已存在）：--skip-download 1
 # 重复运行会自动清理旧部署并重新安装
 
 set -euo pipefail
@@ -17,8 +20,14 @@ CONF_DIR="/etc/frp"
 SERVER_ADDR="${SERVER_ADDR:-}"
 SERVER_PORT="${SERVER_PORT:-7000}"
 TOKEN="${TOKEN:-}"
-# PROXIES 格式: name=ssh,type=tcp,local_ip=127.0.0.1,local_port=22,remote_port=6000;name=web,type=tcp,local_port=80,remote_port=8080
+# PROXIES 格式: name=ssh,type=tcp,local_ip=127.0.0.1,local_port=22,remote_port=6000;name=web,type=tcp,local_ip=127.0.0.1,local_port=80,remote_port=8080
 PROXIES="${PROXIES:-}"
+# --download-url: 自定义 frp 二进制下载源（国内直连 GitHub 慢时，用国内可达镜像）
+DOWNLOAD_URL="${DOWNLOAD_URL:-}"
+# --skip-apt 1: 跳过 apt-get/yum/dnf 依赖安装
+SKIP_APT="${SKIP_APT:-0}"
+# --skip-download 1: 跳过二进制下载+安装（frp 已装在本机，仅重建配置和服务）
+SKIP_DOWNLOAD="${SKIP_DOWNLOAD:-0}"
 # ===============================================================
 
 log() { echo -e "\033[1;32m[INFO]\033[0m $*"; }
@@ -32,6 +41,9 @@ while [[ $# -gt 0 ]]; do
         --port) SERVER_PORT="$2"; shift 2 ;;
         --token) TOKEN="$2"; shift 2 ;;
         --proxies) PROXIES="$2"; shift 2 ;;
+        --download-url) DOWNLOAD_URL="$2"; shift 2 ;;
+        --skip-apt) SKIP_APT="$2"; shift 2 ;;
+        --skip-download) SKIP_DOWNLOAD="$2"; shift 2 ;;
         *) err "未知参数: $1"; exit 1 ;;
     esac
 done
@@ -64,7 +76,6 @@ if [[ -n "$PROXIES" ]]; then
     IFS=';' read -ra RAW_PROXIES <<< "$PROXIES"
     for raw in "${RAW_PROXIES[@]}"; do
         [[ -z "$raw" ]] && continue
-        # 解析 key=value 对
         declare -A cfg
         cfg[name]=""
         cfg[type]="tcp"
@@ -77,7 +88,6 @@ if [[ -n "$PROXIES" ]]; then
             val=${kv#*=}
             cfg["$key"]="$val"
         done
-        # 验证必填字段
         [[ -z "${cfg[name]}" ]] && { err "代理规则缺少 name: $raw"; exit 1; }
         [[ -z "${cfg[local_port]}" ]] && { err "代理规则缺少 local_port: $raw"; exit 1; }
         [[ -z "${cfg[remote_port]}" ]] && { err "代理规则缺少 remote_port: $raw"; exit 1; }
@@ -109,50 +119,67 @@ systemctl disable frpc 2>/dev/null || true
 rm -f /etc/systemd/system/frpc.service
 systemctl daemon-reload
 
-# 删除旧二进制目录（软链接指向的版本目录）
-if [[ -L "$BIN_DIR" ]]; then
-    OLD_TARGET=$(readlink -f "$BIN_DIR" 2>/dev/null || true)
-    rm -f "$BIN_DIR"
-    [[ -n "$OLD_TARGET" && -d "$OLD_TARGET" ]] && rm -rf "$OLD_TARGET"
-elif [[ -d "$BIN_DIR" ]]; then
-    rm -rf "$BIN_DIR"
-fi
-
-# 删除旧配置目录
+# 删除旧配置目录（二进制目录在 --skip-download 时保留）
 if [[ -d "$CONF_DIR" ]]; then
     log "删除旧配置目录: $CONF_DIR"
     rm -rf "$CONF_DIR"
 fi
 
-# ========== 安装依赖 ==========
-log "安装依赖..."
-if command -v apt-get >/dev/null 2>&1; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update -y -qq
-    apt-get install -y -qq wget tar ca-certificates systemd >/dev/null
-elif command -v yum >/dev/null 2>&1; then
-    yum install -y -q wget tar ca-certificates systemd >/dev/null
-elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y -q wget tar ca-certificates systemd >/dev/null
+if [[ "$SKIP_DOWNLOAD" == "1" ]]; then
+    # 仅重建配置，不碰二进制（要求 frp 已装在本机）
+    if [[ ! -d "$BIN_DIR" || ! -f "$BIN_DIR/frpc" ]]; then
+        err "--skip-download 但 frp 二进制不存在于 $BIN_DIR/frpc，无法只重建配置"
+        err "请先去掉 --skip-download 跑一次完整安装"
+        exit 1
+    fi
+    log "跳过二进制下载（frp 已装于 $BIN_DIR）"
 else
-    err "不支持的包管理器，请手动安装 wget tar systemd"
-    exit 1
+    # ========== 安装依赖 ==========
+    if [[ "$SKIP_APT" == "1" ]]; then
+        log "跳过 apt/yum/dnf 依赖安装 (--skip-apt 1)"
+    else
+        log "安装依赖..."
+        if command -v apt-get >/dev/null 2>&1; then
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -y -qq || warn "apt-get update 失败（源可能过期），继续"
+            apt-get install -y -qq wget tar ca-certificates systemd >/dev/null || warn "apt 装部分依赖失败，继续"
+        elif command -v yum >/dev/null 2>&1; then
+            yum install -y -q wget tar ca-certificates systemd || warn "yum 装依赖失败，继续"
+        elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y -q wget tar ca-certificates systemd || warn "dnf 装依赖失败，继续"
+        else
+            warn "未找到包管理器，假设 wget/tar 已存在"
+        fi
+    fi
+
+    # ========== 下载并安装 frp ==========
+    VERSION_DIR="/opt/frp_${FRP_VERSION}_linux_amd64"
+    ARCHIVE="frp_${FRP_VERSION}_linux_amd64.tar.gz"
+    if [[ -z "$DOWNLOAD_URL" ]]; then
+        DOWNLOAD_URL="https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/${ARCHIVE}"
+        warn "未指定 --download-url，用 GitHub 直连（国内可能慢，可加 --download-url 走国内镜像）"
+    fi
+
+    log "下载 frp v${FRP_VERSION} (源: ${DOWNLOAD_URL})..."
+    cd /tmp
+    rm -f "$ARCHIVE"
+    wget -q --show-progress "$DOWNLOAD_URL" -O "$ARCHIVE" || {
+        err "下载失败。国内机器可加 --download-url \"https://gh-proxy.com/https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/${ARCHIVE}\" 重试"
+        exit 1
+    }
+    # 校验下载完整性（防止截断）
+    if [[ ! -s "$ARCHIVE" || $(stat -c%s "$ARCHIVE") -lt 1000000 ]]; then
+        err "下载文件过小（$(stat -c%s "$ARCHIVE" 2>/dev/null) bytes），不完整，疑似网络截断"
+        exit 1
+    fi
+    tar -zxf "$ARCHIVE"
+    rm -f "$ARCHIVE"
+
+    log "安装到 $VERSION_DIR ..."
+    rm -rf "$VERSION_DIR"
+    mv "frp_${FRP_VERSION}_linux_amd64" "$VERSION_DIR"
+    ln -sfn "$VERSION_DIR" "$BIN_DIR"
 fi
-
-# ========== 下载并安装 frp ==========
-VERSION_DIR="/opt/frp_${FRP_VERSION}_linux_amd64"
-ARCHIVE="frp_${FRP_VERSION}_linux_amd64.tar.gz"
-DOWNLOAD_URL="https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/${ARCHIVE}"
-
-log "下载 frp v${FRP_VERSION}..."
-cd /tmp
-wget -q --show-progress "$DOWNLOAD_URL"
-tar -zxf "$ARCHIVE"
-rm -f "$ARCHIVE"
-
-log "安装到 $VERSION_DIR ..."
-mv "frp_${FRP_VERSION}_linux_amd64" "$VERSION_DIR"
-ln -sfn "$VERSION_DIR" "$BIN_DIR"
 
 # ========== 创建配置目录 ==========
 log "创建配置目录: $CONF_DIR"
@@ -247,7 +274,7 @@ echo "=========================================="
 echo "  frpc 部署完成！"
 echo "=========================================="
 echo "  版本:           v${FRP_VERSION}"
-echo "  二进制目录:     ${BIN_DIR} -> ${VERSION_DIR}"
+echo "  二进制目录:     ${BIN_DIR}"
 echo "  配置目录:       ${CONF_DIR}"
 echo "  配置文件:       ${CONF_DIR}/frpc.toml"
 echo "  服务端:         ${SERVER_ADDR}:${SERVER_PORT}"

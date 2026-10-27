@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # frp-server.sh - FRP 服务端一键部署/重装脚本
 # 适配：1 vCPU / 512MB RAM 小型 ECS (Ubuntu 20.04+/Debian 11+)
-# 用法：sudo bash frp-server.sh [--token <token>] [--bind-port <port>] [--dashboard-port <port>] [--dashboard-user <user>] [--dashboard-pwd <pwd>]
+# 用法：sudo bash frp-server.sh [--token <token>] [--bind-port <port>] [--dashboard-port <port>] [--dashboard-user <user>] [--dashboard-pwd <pwd>] [--download-url <url>] [--skip-apt 1]
+#   国内 ECS 部署（GitHub 慢）：加 --download-url "https://gh-proxy.com/https://github.com/fatedier/frp/releases/download/v0.63.0/frp_0.63.0_linux_amd64.tar.gz"
+#   apt 源过期会挂的机器：加 --skip-apt 1（frp 是预编译二进制，不需要 apt 装）
 # 重复运行会自动清理旧部署并重新安装
 
 set -euo pipefail
@@ -16,6 +18,10 @@ DASHBOARD_PORT=7500
 DASHBOARD_USER="admin"
 DASHBOARD_PWD=""
 TOKEN=""
+# --download-url: 自定义 frp 二进制下载源（国内 ECS 直连 GitHub 慢时，用国内可达镜像）
+DOWNLOAD_URL=""
+# --skip-apt 1: 跳过 apt 依赖安装（apt 源过期会挂的机器，frp 是预编译二进制不需要 apt 装）
+SKIP_APT="0"
 # ======================================================
 
 log() { echo -e "\033[1;32m[INFO]\033[0m $*"; }
@@ -30,6 +36,8 @@ while [[ $# -gt 0 ]]; do
         --dashboard-port) DASHBOARD_PORT="$2"; shift 2 ;;
         --dashboard-user) DASHBOARD_USER="$2"; shift 2 ;;
         --dashboard-pwd) DASHBOARD_PWD="$2"; shift 2 ;;
+        --download-url) DOWNLOAD_URL="$2"; shift 2 ;;
+        --skip-apt) SKIP_APT="$2"; shift 2 ;;
         *) err "未知参数: $1"; exit 1 ;;
     esac
 done
@@ -98,19 +106,35 @@ else
 fi
 
 # ========== 安装依赖 ==========
-log "安装依赖 (wget, tar, systemd)..."
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -y -qq
-apt-get install -y -qq wget tar ca-certificates systemd >/dev/null
+if [[ "$SKIP_APT" == "1" ]]; then
+    log "跳过 apt 依赖安装 (--skip-apt 1)"
+else
+    log "安装依赖 (wget, tar, systemd)..."
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y -qq || warn "apt-get update 失败（源可能过期），继续"
+    apt-get install -y -qq wget tar ca-certificates systemd >/dev/null || warn "apt 装部分依赖失败，继续"
+fi
 
 # ========== 下载并安装 frp ==========
 VERSION_DIR="/opt/frp_${FRP_VERSION}_linux_amd64"
 ARCHIVE="frp_${FRP_VERSION}_linux_amd64.tar.gz"
-DOWNLOAD_URL="https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/${ARCHIVE}"
+if [[ -z "$DOWNLOAD_URL" ]]; then
+    DOWNLOAD_URL="https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/${ARCHIVE}"
+    warn "未指定 --download-url，用 GitHub 直连（国内 ECS 可能慢，可加 --download-url 走国内镜像）"
+fi
 
-log "下载 frp v${FRP_VERSION}..."
+log "下载 frp v${FRP_VERSION} (源: ${DOWNLOAD_URL})..."
 cd /tmp
-wget -q --show-progress "$DOWNLOAD_URL"
+rm -f "$ARCHIVE"
+wget -q --show-progress "$DOWNLOAD_URL" -O "$ARCHIVE" || {
+    err "下载失败。国内 ECS 可加 --download-url \"https://gh-proxy.com/https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/${ARCHIVE}\" 重试"
+    exit 1
+}
+# 校验下载完整性（防截断）
+if [[ ! -s "$ARCHIVE" || $(stat -c%s "$ARCHIVE") -lt 1000000 ]]; then
+    err "下载文件过小（$(stat -c%s "$ARCHIVE" 2>/dev/null) bytes），不完整，疑似网络截断"
+    exit 1
+fi
 tar -zxf "$ARCHIVE"
 rm -f "$ARCHIVE"
 
