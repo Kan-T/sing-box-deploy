@@ -1,0 +1,16 @@
+[Unit]
+Description=VDI VPN self-heal watchdog (frpc/sing-box/bind mount)
+# 网络起来后再跑（frpc 依赖它）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# 巡检 + 自愈。脚本由 vdi-bootstrap.sh 装到 /usr/local/bin（任意 VDI 通用路径）。
+# 用 root 跑（frpc/sing-box 是 root 系统服务，需 root 才能 restart/mount）。
+ExecStart=/usr/bin/bash /usr/local/bin/vpn-watchdog.sh
+# 单次巡检很快
+TimeoutStartSec=300
+# 日志目录用桌面用户的 keep_alive（脚本里 KEEPALIVE_HOME 默认 /home/kantaoc/keep_alive，
+# 换任意 VDI 时 bootstrap 会把脚本里的默认 home 一并替换；这里不锁 ReadWritePaths，
+# 避免 ProtectSystem 默认下 mount --bind 失败）。

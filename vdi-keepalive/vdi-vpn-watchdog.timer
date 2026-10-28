@@ -1,0 +1,13 @@
+[Unit]
+Description=Run VDI VPN watchdog every 3 minutes
+
+[Timer]
+# 开机 1 分钟后先跑一次（网络稳定后），之后每 3 分钟
+OnBootSec=1min
+OnUnitActiveSec=3min
+AccuracySec=30s
+Persistent=true
+Unit=vdi-vpn-watchdog.service
+
+[Install]
+WantedBy=timers.target

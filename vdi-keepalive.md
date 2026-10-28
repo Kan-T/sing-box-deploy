@@ -182,6 +182,47 @@ IsVaildSession: login module is null, only HDAgent restart, no need to rebuild s
 
 推荐 **1 + 2 双保险**：fstab 负责开机，heal.py 负责"挂载被意外弄掉"。
 
+## VPN 自愈巡检（vpn-watchdog timer）
+
+让 frpc/sing-box（翻墙出口隧道）**24h 有兜底**：每 3 分钟 systemd timer 自动跑一次
+`vpn-watchdog.sh`，发现某段掉了就自动拉起并记日志。纯系统级，不依赖桌面会话。
+
+**巡检项**：
+| 项 | 判定 | 自愈动作 |
+|---|---|---|
+| frpc | `is-active` 非 active，或 frpc 日志末行是 disconnected/EOF/dial fail | `systemctl restart frpc` |
+| sing-box | `is-active` 非 active，或 443 未监听 | `systemctl restart sing-box` |
+| bind mount | `/etc/hdpserver/policy.xml` 未挂载 | `mount --bind policy_fake.xml` |
+
+**部署**（`vdi-bootstrap.sh` 会一并装；或手动）：
+```bash
+sudo install -m 755 vpn-watchdog.sh /home/kantaoc/keep_alive/
+sudo install -m 644 vdi-vpn-watchdog.service /etc/systemd/system/
+sudo install -m 644 vdi-vpn-watchdog.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now vdi-vpn-watchdog.timer
+```
+
+**日志**：`/home/kantaoc/keep_alive/vpn-watchdog.log`（每轮一行，heal.py 会审计最近状态）
+
+**为什么 3 分钟而不是 15 分钟**：frpc/sing-box 是 VPN 命脉，挂太久影响翻墙；
+3 分钟是"自愈快"和"巡检开销"的平衡点。
+
+### ⚠️ 关键坑（2026-10-28 踩到，务必避免再犯）
+
+**在 6022 SSH 通道里跑 `vpn-watchdog.sh`（或任何会重启 frpc 的操作），会掐断自己。**
+6022 隧道就是 frpc 建的——巡检 `restart frpc` 的瞬间，我所在的这条 SSH 会断，
+脚本后半段（sing-box / bind mount 检查）跑不到一半就中断。
+
+正确姿势：
+1. **timer 自动触发时**没问题（没有外部 SSH 依赖），让它自己跑。
+2. **手动验证时**：先确认 frpc 健康，再 `systemctl stop frpc` 测试自愈，
+   但要**准备好 6022 会断**——断后等 timer（≤3min）自愈 frpc，再重连验证。
+   不要一边 `stop frpc` 一边指望同一条 SSH 跑完整个脚本。
+
+**frpc `systemctl stop` 后没有别的恢复路径**：6022 断了就只能等 timer 下一轮
+（≤3min）或 VDI 重启。这就是为什么 timer 不能设太长。
+
 ## 端口对照
 
 | 服务 | 端口 | 说明 |

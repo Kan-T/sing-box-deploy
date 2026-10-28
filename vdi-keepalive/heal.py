@@ -322,6 +322,28 @@ def check_hdp_session():
     else:
         issue("HDAgent 日志", "FAIL", f"有 {bad} 条 pre-connect 失败/坏态。若持续, 参考 vdi-hdc-repair.sh（注销会话+重启HDAgent+重新正规登录, 或重启VDI）")
 
+# ============================================================
+# 5d. VPN 自愈巡检 (vpn-watchdog timer)
+# ============================================================
+def check_vpn_watchdog():
+    print("\n--- VPN 自愈巡检 (vpn-watchdog) ---")
+    r = subprocess.run(["systemctl", "is-active", "vdi-vpn-watchdog.timer"],
+                       capture_output=True, text=True, timeout=5)
+    active = r.stdout.strip() == "active"
+    issue("watchdog timer", "OK" if active else "WARN",
+          "每 3min 巡检 frpc/sing-box/bind mount" if active
+          else "未启用（VPN 掉线不会自愈；sudo systemctl enable --now vdi-vpn-watchdog.timer）")
+
+    r2 = subprocess.run(["tail", "-n", "6", "/home/kantaoc/keep_alive/vpn-watchdog.log"],
+                        capture_output=True, text=True, timeout=5)
+    tail = r2.stdout.strip()
+    bad = ("❌" in tail) or ("恢复失败" in tail)
+    if tail:
+        issue("最近巡检", "WARN" if bad else "OK",
+              "发现异常自愈项（看 vpn-watchdog.log）" if bad else "上次巡检正常")
+    else:
+        issue("最近巡检", "WARN", "无日志（timer 可能未跑过）")
+
 
     if not fixes:
         print("\n✅ 无修复需要")
@@ -387,6 +409,7 @@ if __name__ == "__main__":
     check_singbox()
     check_frps_tunnel()
     check_hdp_session()
+    check_vpn_watchdog()
 
     summary()
 

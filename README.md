@@ -279,8 +279,16 @@ sudo bash vdi-hdc-repair.sh --reboot   # 重启 VDI（最彻底；frpc/sing-box/
 
 | 脚本 | 用途 |
 |------|------|
-| `vdi-bootstrap.sh` | 任意 VDI 从零/换机器**一键自举**：装 sing-box + frpc + keepalive + bind mount + SSH 公钥，打印 VLESS 链接 |
+| `vdi-bootstrap.sh` | 任意 VDI 从零/换机器**一键自举**：装 sing-box + frpc + keepalive + bind mount + SSH 公钥 + **VPN 自愈巡检**，打印 VLESS 链接 |
 | `vdi-hdc-repair.sh` | 修复"只能 VNC / 6039 / 28104003"：注销会话 / 重启 HDAgent / 重启 VDI 分级恢复 |
+| `vdi-keepalive/vpn-watchdog.sh` + `.service`/`.timer` | **VPN 24h 兜底**：每 3 分钟 systemd timer 自动巡检 frpc/sing-box/bind mount，掉了就拉起（部署进 `/usr/local/bin` + timer） |
+
+**VPN 自愈巡检（关键）**：frpc/sing-box 是翻墙命脉。`vpn-watchdog` timer 每 3 分钟
+自检一次，任何一段掉了自动 `systemctl restart` 并记日志（`keep_alive/vpn-watchdog.log`）。
+纯系统级，不依赖桌面会话——**桌面登出也不影响 VPN 24h 稳定**。
+
+> ⚠️ 坑：别在 6022 SSH 通道里手动跑 `vpn-watchdog.sh`（它会重启 frpc、掐断自己这条 SSH，
+> 脚本后半段跑不到一半就断）。让它靠 timer 自动跑；手动验证时先备好吃 6022 会断 3 秒。
 
 用法示例：
 ```bash

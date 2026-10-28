@@ -153,6 +153,19 @@ EOF
   ok "vdi-keepalive user service 已配置（图形会话内运行）"
 fi
 
+# VPN 自愈巡检 timer（frpc/sing-box/bind mount 掉了自动拉起，24h 兜底）
+if [[ -f "$SCRIPT_DIR/vdi-keepalive/vpn-watchdog.sh" ]]; then
+  cp -f "$SCRIPT_DIR/vdi-keepalive/vpn-watchdog.sh" "$KEEP_DIR/vpn-watchdog.sh"
+  install -m 755 "$KEEP_DIR/vpn-watchdog.sh" /usr/local/bin/vpn-watchdog.sh 2>/dev/null || true
+  install -m 644 "$SCRIPT_DIR/vdi-keepalive/vdi-vpn-watchdog.service" /etc/systemd/system/vdi-vpn-watchdog.service 2>/dev/null || true
+  install -m 644 "$SCRIPT_DIR/vdi-keepalive/vdi-vpn-watchdog.timer" /etc/systemd/system/vdi-vpn-watchdog.timer 2>/dev/null || true
+  # service 里 ExecStart 指向桌面用户 home，适配实际路径
+  sed -i "s|/home/kantaoc/keep_alive|$KEEP_DIR|g" /etc/systemd/system/vdi-vpn-watchdog.service 2>/dev/null || true
+  systemctl daemon-reload 2>/dev/null
+  systemctl enable --now vdi-vpn-watchdog.timer 2>/dev/null || warn "  vdi-vpn-watchdog timer 未能 enable（稍后手动: systemctl enable --now vdi-vpn-watchdog.timer）"
+  ok "vpn-watchdog 巡检 timer 已部署（每 3min 自愈 frpc/sing-box/bind mount）"
+fi
+
 # =============================================================================
 log "STEP 4/6: 配 root SSH 公钥到 VDI（经 6022 隧道远程运维）"
 if [[ -n "$SSH_PUBKEY" ]]; then
